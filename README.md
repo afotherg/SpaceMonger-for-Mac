@@ -20,6 +20,9 @@ The app works best with as much screen space as possible.
 - Finder actions for revealing or explicitly opening an item.
 - Move to Trash without rescanning the complete selected hierarchy.
 
+<img width="1432" height="946" alt="Space Monger Cached Files" src="https://github.com/user-attachments/assets/44498ec5-c9c0-49c8-97b6-f21927010c3a" />
+
+
 ## Downloading and Running
 On the right hand side of the github page, click on Releases, and download the .zip file
 
