@@ -59,6 +59,27 @@ swift build -c release
 ".build/release/SpaceMonger for Mac"
 ```
 
+Create a universal macOS app bundle and ZIP locally:
+
+```sh
+Scripts/package-app.sh v1.0.0
+open "dist/SpaceMonger for Mac.app"
+```
+
+## Creating a Release
+
+Releases are created on demand with GitHub Actions:
+
+1. Open **Actions** in GitHub and select **Create Release**.
+2. Choose **Run workflow**.
+3. Enter a new semantic version tag such as `v1.0.0` and optionally mark it as a
+   pre-release.
+
+The workflow builds a Universal 2 app for Intel and Apple silicon, applies an ad-hoc
+signature, packages it as a ZIP, creates the tag, and publishes a GitHub Release with
+automatically generated release notes. The app is not notarized, so macOS may require
+users to approve it the first time it is opened.
+
 ## Project Structure
 
 ```text
