@@ -20,22 +20,31 @@ The app works best with as much screen space as possible.
 - Finder actions for revealing or explicitly opening an item.
 - Move to Trash without rescanning the complete selected hierarchy.
 
-## Incremental Move to Trash
+## Downloading and Running
+On the right hand side of the github page, click on Releases, and download the .zip file
 
-Moving an item to Trash is treated as a filesystem move, not an immediate deletion:
+Unzip the file, and copy the "SpaceMonger for Mac" file to your Applications folder.
 
-1. macOS moves the item using `FileManager.trashItem`.
-2. macOS returns the actual destination URL. This matters because Trash locations
-   can differ by volume and filenames may be changed to avoid collisions.
-3. The item is removed from its original parent in the in-memory tree.
-4. If the macOS Trash destination is inside the selected hierarchy, a relocated copy
-   is added there as well.
-5. Sizes and item counts are recalculated only for affected ancestors, and the
-   treemap is laid out again without a full disk scan.
+In Applications, double click on SpaceMonger for Mac, and you will get a warning message:
 
-The item remains in the system Trash until the Trash is emptied. Changes made outside
-the app, including emptying the Trash, are not currently reflected automatically and
-require another scan.
+<img width="259" height="292" alt="Warning Message" src="https://github.com/user-attachments/assets/c40b7d67-45bd-4a36-98e4-674f52cb514f" />
+
+Click "Done". Then go to System Settings..." and "Privacy & Security", scroll down, and you will see:
+
+<img width="475" height="195" alt="Allow Application" src="https://github.com/user-attachments/assets/75b3f515-ce96-4d61-8842-f4a1a0c45340" />
+
+Click "Open Anyway", and then click "Open Anyway" again.
+
+
+<img width="260" height="345" alt="Open Anyway" src="https://github.com/user-attachments/assets/05c29249-0880-4ffb-b1a8-836ccec77c49" />
+
+You then enter your password, or Touch ID.
+
+<img width="258" height="334" alt="Password Confirm" src="https://github.com/user-attachments/assets/dd8638b9-9aed-4307-aad5-9e800213b511" />
+
+You only have to do this once!
+
+Next, dependent on which directory you open, you may have to give permission to access Downloads, Photos, Documents, etc.
 
 ## Building
 
