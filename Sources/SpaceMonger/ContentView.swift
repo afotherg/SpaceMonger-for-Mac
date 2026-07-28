@@ -329,6 +329,15 @@ struct ContentView: View {
                         .foregroundColor(.secondary)
                 }
 
+                if let ownerURL = node.fileNode.storageOwnerURL {
+                    Text("Hard link · storage counted elsewhere")
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .help("Storage counted under \(ownerURL.path)")
+                }
+
                 Text(node.fileNode.formattedSize)
                     .font(.system(size: 10, weight: .semibold))
                     .monospacedDigit()

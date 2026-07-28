@@ -10,9 +10,12 @@ final class FileNode: Identifiable, @unchecked Sendable {
     let name: String
     let url: URL
     let actualSize: Int64     // real file size in bytes
-    let allocatedSize: Int64  // size on disk (actual storage used)
+    private(set) var allocatedSize: Int64  // counted size on disk
     let isDirectory: Bool
     let modificationDate: Date?
+    /// Another path owns this file object's allocated bytes when it is a hard link.
+    private(set) var storageOwnerURL: URL?
+    let fileIdentity: FileIdentity?
 
     var children: [FileNode] = []
     weak var parent: FileNode?
@@ -28,7 +31,9 @@ final class FileNode: Identifiable, @unchecked Sendable {
         actualSize: Int64,
         allocatedSize: Int64,
         isDirectory: Bool,
-        modificationDate: Date? = nil
+        modificationDate: Date? = nil,
+        storageOwnerURL: URL? = nil,
+        fileIdentity: FileIdentity? = nil
     ) {
         self.name = name
         self.url = url
@@ -36,6 +41,8 @@ final class FileNode: Identifiable, @unchecked Sendable {
         self.allocatedSize = allocatedSize
         self.isDirectory = isDirectory
         self.modificationDate = modificationDate
+        self.storageOwnerURL = storageOwnerURL
+        self.fileIdentity = fileIdentity
     }
 
     /// Recursive total size of this node and all descendants.
@@ -95,7 +102,9 @@ final class FileNode: Identifiable, @unchecked Sendable {
             actualSize: actualSize,
             allocatedSize: allocatedSize,
             isDirectory: isDirectory,
-            modificationDate: modificationDate
+            modificationDate: modificationDate,
+            storageOwnerURL: storageOwnerURL,
+            fileIdentity: fileIdentity
         )
         copy.children = children.map { child in
             let childCopy = child.relocatedCopy(
@@ -109,6 +118,14 @@ final class FileNode: Identifiable, @unchecked Sendable {
         }
         copy.sortChildrenBySize()
         return copy
+    }
+
+    /// Makes a previously uncounted hard link own the shared file allocation.
+    func takeStorageOwnership(allocatedSize: Int64) {
+        guard !isDirectory else { return }
+        self.allocatedSize = allocatedSize
+        storageOwnerURL = nil
+        refreshCachedAggregatesUpward()
     }
 
     private func refreshCachedAggregatesUpward() {

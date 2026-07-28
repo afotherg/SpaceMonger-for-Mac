@@ -11,6 +11,10 @@ let package = Package(
         .executableTarget(
             name: "SpaceMonger",
             path: "Sources/SpaceMonger"
+        ),
+        .testTarget(
+            name: "SpaceMongerTests",
+            dependencies: ["SpaceMonger"]
         )
     ]
 )
