@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 // 8-color palette cycling by depth — similar to the 26-color palette in the
 // original (OnDraw uses depth % 8 with two sets of 4 colours per group).
@@ -48,25 +49,31 @@ struct TreeMapView: View {
                 }
             }
             .contentShape(Rectangle())
-            // Hover: update hoveredNode as the mouse moves (replaces WM_MOUSEMOVE)
-            .onContinuousHover { phase in
-                switch phase {
-                case .active(let pt):
-                    hoveredNode = TreeMapLayoutEngine.hitTest(point: pt, in: renderedNodes)
-                case .ended:
-                    hoveredNode = nil
+            .overlay {
+                MouseLocationTrackingView { point in
+                    if let point {
+                        hoveredNode = TreeMapLayoutEngine.hitTest(
+                            point: point, in: renderedNodes)
+                    } else {
+                        hoveredNode = nil
+                    }
                 }
             }
             // Click: the parent decides whether the selected node is navigable.
             .gesture(
-                SpatialTapGesture().onEnded { e in
+                DragGesture(minimumDistance: 0, coordinateSpace: .local).onEnded { e in
+                    guard abs(e.translation.width) < 4,
+                          abs(e.translation.height) < 4 else { return }
                     if let node = TreeMapLayoutEngine.hitTest(
                         point: e.location, in: renderedNodes) {
                         onNodeTapped(node.fileNode)
                     }
                 }
             )
-            .onChange(of: geo.size, initial: true) { _, newSize in
+            .onAppear {
+                updateLayout(for: geo.size)
+            }
+            .onChange(of: geo.size) { newSize in
                 updateLayout(for: newSize)
             }
             .task(id: TreeMapUpdateID(rootID: root.id, revision: revision)) {
@@ -165,4 +172,75 @@ struct TreeMapView: View {
 private struct TreeMapUpdateID: Hashable {
     let rootID: UUID
     let revision: Int
+}
+
+/// AppKit-backed pointer tracking keeps hover coordinates available on Monterey.
+/// Returning nil from hitTest lets SwiftUI continue handling clicks and context menus.
+private struct MouseLocationTrackingView: NSViewRepresentable {
+    let onLocationChange: (CGPoint?) -> Void
+
+    func makeNSView(context: Context) -> MouseLocationTrackingNSView {
+        MouseLocationTrackingNSView(onLocationChange: onLocationChange)
+    }
+
+    func updateNSView(_ nsView: MouseLocationTrackingNSView, context: Context) {
+        nsView.onLocationChange = onLocationChange
+    }
+}
+
+private final class MouseLocationTrackingNSView: NSView {
+    var onLocationChange: (CGPoint?) -> Void
+    private var mouseTrackingArea: NSTrackingArea?
+
+    init(onLocationChange: @escaping (CGPoint?) -> Void) {
+        self.onLocationChange = onLocationChange
+        super.init(frame: .zero)
+    }
+
+    required init?(coder: NSCoder) {
+        nil
+    }
+
+    override var isFlipped: Bool { true }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        nil
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        window?.acceptsMouseMovedEvents = true
+    }
+
+    override func updateTrackingAreas() {
+        if let mouseTrackingArea {
+            removeTrackingArea(mouseTrackingArea)
+        }
+
+        let trackingArea = NSTrackingArea(
+            rect: .zero,
+            options: [.mouseEnteredAndExited, .mouseMoved, .activeInKeyWindow, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(trackingArea)
+        mouseTrackingArea = trackingArea
+        super.updateTrackingAreas()
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        reportLocation(of: event)
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        reportLocation(of: event)
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        onLocationChange(nil)
+    }
+
+    private func reportLocation(of event: NSEvent) {
+        onLocationChange(convert(event.locationInWindow, from: nil))
+    }
 }

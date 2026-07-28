@@ -16,7 +16,6 @@ struct SpaceMongerApp: App {
                 }
         }
         .windowStyle(.titleBar)
-        .windowResizability(.contentMinSize)
         .commands {
             // Remove "New Window" — this is a single-window utility
             CommandGroup(replacing: .newItem) {}
@@ -45,7 +44,9 @@ private final class InitialWindowMaximizingView: NSView {
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        guard !hasMaximized, let window else { return }
+        guard let window else { return }
+        window.contentMinSize = NSSize(width: 900, height: 600)
+        guard !hasMaximized else { return }
         hasMaximized = true
 
         DispatchQueue.main.async { [weak window] in

@@ -53,7 +53,7 @@ Next, dependent on which directory you open, you may have to give permission to 
 
 Requirements:
 
-- macOS 14 or newer
+- macOS 12 Monterey or newer
 - Swift 5.9 or newer
 - Xcode command-line tools
 

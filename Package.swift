@@ -3,7 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "SpaceMonger",
-    platforms: [.macOS(.v14)],
+    platforms: [.macOS(.v12)],
     products: [
         .executable(name: "SpaceMonger for Mac", targets: ["SpaceMonger"])
     ],

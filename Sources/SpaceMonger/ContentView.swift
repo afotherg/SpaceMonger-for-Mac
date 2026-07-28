@@ -59,12 +59,12 @@ struct ContentView: View {
                 .background(.bar)
         }
         .frame(minWidth: 900, minHeight: 600)
-        .onChange(of: searchText) { _, newValue in
+        .onChange(of: searchText) { newValue in
             if newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 clearSearch()
             }
         }
-        .onChange(of: scanner.root?.id) { _, _ in
+        .onChange(of: scanner.root?.id) { _ in
             if !activeSearchQuery.isEmpty { performSearch() }
         }
         .onDisappear { searchTask?.cancel() }
@@ -162,11 +162,16 @@ struct ContentView: View {
                 ProgressView("Searching file and directory names…")
                 Spacer()
             } else if searchResults.isEmpty {
-                ContentUnavailableView(
-                    "No Matches",
-                    systemImage: "magnifyingglass",
-                    description: Text("No file or directory name contains “\(activeSearchQuery)”.")
-                )
+                VStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 36))
+                        .foregroundColor(.secondary)
+                    Text("No Matches")
+                        .font(.title2.bold())
+                    Text("No file or directory name contains “\(activeSearchQuery)”.")
+                        .foregroundColor(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 List(searchResults) { node in
                     Button {
