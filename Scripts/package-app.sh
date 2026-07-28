@@ -20,8 +20,9 @@ swift build -c release --arch arm64 --arch x86_64
 BIN_DIRECTORY="$(swift build -c release --show-bin-path --arch arm64 --arch x86_64)"
 
 rm -rf "$APP_BUNDLE" "$ARCHIVE"
-mkdir -p "$APP_BUNDLE/Contents/MacOS"
+mkdir -p "$APP_BUNDLE/Contents/MacOS" "$APP_BUNDLE/Contents/Resources"
 cp "$BIN_DIRECTORY/$APP_NAME" "$APP_BUNDLE/Contents/MacOS/$APP_NAME"
+cp "Assets/AppIcon.icns" "$APP_BUNDLE/Contents/Resources/AppIcon.icns"
 
 cat > "$APP_BUNDLE/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -36,6 +37,8 @@ cat > "$APP_BUNDLE/Contents/Info.plist" <<PLIST
     <string>com.github.afotherg.spacemonger-for-mac</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
     <key>CFBundleName</key>
     <string>$APP_NAME</string>
     <key>CFBundlePackageType</key>

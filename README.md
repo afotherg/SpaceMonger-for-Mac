@@ -96,6 +96,9 @@ users to approve it the first time it is opened.
 
 ```text
 Package.swift
+Assets/
+├── AppIcon.png            1024-pixel source artwork
+└── AppIcon.icns           macOS application icon bundle
 Sources/SpaceMonger/
 ├── ContentView.swift       Main interface, search, navigation, and actions
 ├── FileNode.swift          In-memory filesystem tree and cached totals
