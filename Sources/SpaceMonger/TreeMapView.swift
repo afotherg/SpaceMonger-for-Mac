@@ -36,7 +36,7 @@ struct TreeMapView: View {
         // Read state while evaluating the SwiftUI body, not only inside Canvas's
         // deferred renderer closure. This makes a new layout invalidate the Canvas.
         let renderedNodes = layoutNodes
-        let hoveredID = hoveredNode?.fileNode.id
+        let highlightedNode = hoveredNode?.fileNode
 
         GeometryReader { geo in
             Canvas { ctx, size in
@@ -46,7 +46,28 @@ struct TreeMapView: View {
 
                 for node in renderedNodes {
                     draw(node: node, in: ctx,
-                         hovered: hoveredID == node.fileNode.id)
+                         hovered: highlightedNode === node.fileNode)
+                }
+
+                if let highlightedNode {
+                    // Dim the complete map, then repaint the hovered item at full
+                    // brightness. A folder's descendants are repainted as well so
+                    // its contents remain visible as one highlighted region.
+                    ctx.fill(
+                        Path(CGRect(origin: .zero, size: size)),
+                        with: .color(.black.opacity(0.48))
+                    )
+
+                    for node in renderedNodes where belongsToSpotlight(
+                        node.fileNode,
+                        highlightedNode: highlightedNode
+                    ) {
+                        draw(
+                            node: node,
+                            in: ctx,
+                            hovered: highlightedNode === node.fileNode
+                        )
+                    }
                 }
             }
             .contentShape(Rectangle())
@@ -103,6 +124,18 @@ struct TreeMapView: View {
     }
 
     // MARK: - Drawing
+
+    private func belongsToSpotlight(
+        _ node: FileNode,
+        highlightedNode: FileNode
+    ) -> Bool {
+        var candidate: FileNode? = node
+        while let current = candidate {
+            if current === highlightedNode { return true }
+            candidate = current.parent
+        }
+        return false
+    }
 
     private func draw(node: DisplayNode, in ctx: GraphicsContext, hovered: Bool) {
         let rect = node.rect
