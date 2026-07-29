@@ -3,6 +3,35 @@ import XCTest
 @testable import SpaceMonger
 
 final class FolderScannerTests: XCTestCase {
+    func testSizeMetricSelectsAllocatedOrLogicalTotals() {
+        let root = FileNode(
+            name: "root",
+            url: URL(fileURLWithPath: "/root"),
+            actualSize: 0,
+            allocatedSize: 0,
+            isDirectory: true
+        )
+        let first = FileNode(
+            name: "first",
+            url: URL(fileURLWithPath: "/root/first"),
+            actualSize: 1_000,
+            allocatedSize: 4_096,
+            isDirectory: false
+        )
+        let second = FileNode(
+            name: "second",
+            url: URL(fileURLWithPath: "/root/second"),
+            actualSize: 2_000,
+            allocatedSize: 0,
+            isDirectory: false
+        )
+        root.addChild(first)
+        root.addChild(second)
+
+        XCTAssertEqual(root.size(for: .allocated), 4_096)
+        XCTAssertEqual(root.size(for: .logical), 3_000)
+    }
+
     func testMountPolicyExcludesLiteralMountsButNotFirmlinkPaths() {
         let policy = ScanBoundaryPolicy(
             scanRootURL: URL(fileURLWithPath: "/", isDirectory: true),

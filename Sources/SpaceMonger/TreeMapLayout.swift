@@ -27,10 +27,20 @@ enum TreeMapLayoutEngine {
 
     // MARK: - Public entry point
 
-    static func layout(root: FileNode, in bounds: CGRect) -> [DisplayNode] {
+    static func layout(
+        root: FileNode,
+        in bounds: CGRect,
+        sizeMetric: SizeMetric = .allocated
+    ) -> [DisplayNode] {
         var nodes: [DisplayNode] = []
-        let items = root.children.filter { $0.totalSize > 0 }
-        layoutItems(items, in: bounds, depth: 0, nodes: &nodes)
+        let items = sortedPositiveChildren(of: root, sizeMetric: sizeMetric)
+        layoutItems(
+            items,
+            in: bounds,
+            depth: 0,
+            sizeMetric: sizeMetric,
+            nodes: &nodes
+        )
         return nodes
     }
 
@@ -40,6 +50,7 @@ enum TreeMapLayoutEngine {
         _ items: [FileNode],
         in rect: CGRect,
         depth: Int,
+        sizeMetric: SizeMetric,
         nodes: inout [DisplayNode]
     ) {
         guard !items.isEmpty else { return }
@@ -56,9 +67,15 @@ enum TreeMapLayoutEngine {
             ))
             if item.isDirectory {
                 let inner = innerRect(for: rect)
-                let children = item.children.filter { $0.totalSize > 0 }
+                let children = sortedPositiveChildren(of: item, sizeMetric: sizeMetric)
                 if inner.width >= minRectSize, inner.height >= minRectSize {
-                    layoutItems(children, in: inner, depth: depth + 1, nodes: &nodes)
+                    layoutItems(
+                        children,
+                        in: inner,
+                        depth: depth + 1,
+                        sizeMetric: sizeMetric,
+                        nodes: &nodes
+                    )
                 }
             }
             return
@@ -76,10 +93,10 @@ enum TreeMapLayoutEngine {
         for item in items {
             if sum1 <= sum2 {
                 list1.append(item)
-                sum1 += item.totalSize
+                sum1 += item.size(for: sizeMetric)
             } else {
                 list2.append(item)
-                sum2 += item.totalSize
+                sum2 += item.size(for: sizeMetric)
             }
         }
 
@@ -109,11 +126,36 @@ enum TreeMapLayoutEngine {
                            width: rect.width, height: rect.maxY - splitY)
         }
 
-        if !list1.isEmpty { layoutItems(list1, in: rect1, depth: depth, nodes: &nodes) }
-        if !list2.isEmpty { layoutItems(list2, in: rect2, depth: depth, nodes: &nodes) }
+        if !list1.isEmpty {
+            layoutItems(
+                list1,
+                in: rect1,
+                depth: depth,
+                sizeMetric: sizeMetric,
+                nodes: &nodes
+            )
+        }
+        if !list2.isEmpty {
+            layoutItems(
+                list2,
+                in: rect2,
+                depth: depth,
+                sizeMetric: sizeMetric,
+                nodes: &nodes
+            )
+        }
     }
 
     // MARK: - Helpers
+
+    private static func sortedPositiveChildren(
+        of node: FileNode,
+        sizeMetric: SizeMetric
+    ) -> [FileNode] {
+        node.children
+            .filter { $0.size(for: sizeMetric) > 0 }
+            .sorted { $0.size(for: sizeMetric) > $1.size(for: sizeMetric) }
+    }
 
     /// Returns the usable inner rect of a directory node (below the title bar,
     /// inside the border).

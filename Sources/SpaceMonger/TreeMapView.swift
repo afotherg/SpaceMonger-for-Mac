@@ -23,6 +23,7 @@ private func colorForDepth(_ depth: Int) -> Color {
 struct TreeMapView: View {
     let root: FileNode
     let revision: Int
+    let sizeMetric: SizeMetric
     let onNodeTapped: (FileNode) -> Void
     @Binding var hoveredNode: DisplayNode?
 
@@ -76,7 +77,11 @@ struct TreeMapView: View {
             .onChange(of: geo.size) { newSize in
                 updateLayout(for: newSize)
             }
-            .task(id: TreeMapUpdateID(rootID: root.id, revision: revision)) {
+            .task(id: TreeMapUpdateID(
+                rootID: root.id,
+                revision: revision,
+                sizeMetric: sizeMetric
+            )) {
                 // The view can appear before GeometryReader has its final size. Yielding
                 // one run-loop turn ensures a newly scanned root gets a visible layout
                 // without waiting for an unrelated hover event to invalidate the Canvas.
@@ -91,7 +96,10 @@ struct TreeMapView: View {
     private func updateLayout(for size: CGSize) {
         guard size.width > 0, size.height > 0 else { return }
         layoutNodes = TreeMapLayoutEngine.layout(
-            root: root, in: CGRect(origin: .zero, size: size))
+            root: root,
+            in: CGRect(origin: .zero, size: size),
+            sizeMetric: sizeMetric
+        )
     }
 
     // MARK: - Drawing
@@ -172,6 +180,7 @@ struct TreeMapView: View {
 private struct TreeMapUpdateID: Hashable {
     let rootID: UUID
     let revision: Int
+    let sizeMetric: SizeMetric
 }
 
 /// AppKit-backed pointer tracking keeps hover coordinates available on Monterey.

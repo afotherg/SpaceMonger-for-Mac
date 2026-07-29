@@ -1,5 +1,13 @@
 import Foundation
 
+enum SizeMetric: String, CaseIterable, Identifiable, Sendable {
+    case allocated
+    case logical
+
+    var id: Self { self }
+    var title: String { rawValue.capitalized }
+}
+
 /// Represents a file or directory in the scanned tree.
 /// Mirrors the CFolder struct from the original Windows code, adapted for Swift/macOS.
 // Nodes are assembled by scanner workers before the completed tree is handed to the
@@ -22,6 +30,7 @@ final class FileNode: Identifiable, @unchecked Sendable {
 
     // Cached total size to avoid recomputation
     private var _totalSize: Int64 = -1
+    private var _logicalTotalSize: Int64 = -1
     private var _fileCount = -1
     private var _folderCount = -1
 
@@ -57,12 +66,34 @@ final class FileNode: Identifiable, @unchecked Sendable {
         return _totalSize
     }
 
+    /// Recursive logical byte count. Unlike allocated size, each directory entry
+    /// contributes its reported file length, including additional hard links.
+    var logicalTotalSize: Int64 {
+        if _logicalTotalSize >= 0 { return _logicalTotalSize }
+        if isDirectory {
+            _logicalTotalSize = children.reduce(0) { $0 + $1.logicalTotalSize }
+        } else {
+            _logicalTotalSize = actualSize
+        }
+        return _logicalTotalSize
+    }
+
+    func size(for metric: SizeMetric) -> Int64 {
+        switch metric {
+        case .allocated: return totalSize
+        case .logical: return logicalTotalSize
+        }
+    }
+
     /// Sort children by totalSize descending at every level.
     /// The original uses an 8-bit radix sort (O(n)); we use Swift's timsort (O(n log n))
     /// which is fast enough for filesystem counts in practice.
     func sortChildrenBySize() {
         children.sort { $0.totalSize > $1.totalSize }
         children.forEach { $0.sortChildrenBySize() }
+
+        // Populate both size caches before the tree is published to readers.
+        _ = logicalTotalSize
 
         if isDirectory {
             _fileCount = children.reduce(0) { $0 + $1.fileCount }
@@ -132,12 +163,14 @@ final class FileNode: Identifiable, @unchecked Sendable {
         if isDirectory {
             children.sort { $0.totalSize > $1.totalSize }
             _totalSize = children.reduce(0) { $0 + $1.totalSize }
+            _logicalTotalSize = children.reduce(0) { $0 + $1.logicalTotalSize }
             _fileCount = children.reduce(0) { $0 + $1.fileCount }
             _folderCount = children.reduce(0) {
                 $0 + ($1.isDirectory ? 1 : 0) + $1.folderCount
             }
         } else {
             _totalSize = allocatedSize
+            _logicalTotalSize = actualSize
             _fileCount = 1
             _folderCount = 0
         }
@@ -145,6 +178,10 @@ final class FileNode: Identifiable, @unchecked Sendable {
     }
 
     var formattedSize: String { formatBytes(totalSize) }
+
+    func formattedSize(for metric: SizeMetric) -> String {
+        formatBytes(size(for: metric))
+    }
 
     var fileCount: Int {
         if _fileCount >= 0 { return _fileCount }

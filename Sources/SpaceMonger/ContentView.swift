@@ -10,6 +10,7 @@ struct ContentView: View {
     @State private var searchResults: [FileNode] = []
     @State private var isSearching = false
     @State private var searchTask: Task<Void, Never>?
+    @State private var sizeMetric: SizeMetric = .allocated
 
     /// The node currently displayed as the treemap root (zoom-aware).
     private var currentRoot: FileNode? {
@@ -31,6 +32,7 @@ struct ContentView: View {
                         TreeMapView(
                             root: root,
                             revision: scanner.treeRevision,
+                            sizeMetric: sizeMetric,
                             onNodeTapped: handleTap,
                             hoveredNode: $hoveredNode
                         )
@@ -65,6 +67,10 @@ struct ContentView: View {
             }
         }
         .onChange(of: scanner.root?.id) { _ in
+            if !activeSearchQuery.isEmpty { performSearch() }
+        }
+        .onChange(of: sizeMetric) { _ in
+            hoveredNode = nil
             if !activeSearchQuery.isEmpty { performSearch() }
         }
         .onDisappear { searchTask?.cancel() }
@@ -120,6 +126,15 @@ struct ContentView: View {
             }
 
             Spacer()
+
+            Picker("Size", selection: $sizeMetric) {
+                ForEach(SizeMetric.allCases) { metric in
+                    Text(metric.title).tag(metric)
+                }
+            }
+            .pickerStyle(.segmented)
+            .frame(width: 180)
+            .help("Choose whether areas represent allocated disk space or logical file size")
 
             if scanner.isScanning {
                 ProgressView().scaleEffect(0.6).frame(width: 16, height: 16)
@@ -199,7 +214,7 @@ struct ContentView: View {
 
                             Spacer(minLength: 12)
 
-                            Text(node.formattedSize)
+                            Text(node.formattedSize(for: sizeMetric))
                                 .font(.system(.body, design: .monospaced))
                                 .monospacedDigit()
                                 .fixedSize()
@@ -223,6 +238,7 @@ struct ContentView: View {
         hoveredNode = nil
 
         let query = normalizedSearchText
+        let metric = sizeMetric
         guard !query.isEmpty, let root = scanner.root else {
             isSearching = false
             return
@@ -232,7 +248,7 @@ struct ContentView: View {
         isSearching = true
         searchTask = Task { @MainActor in
             let worker = Task.detached(priority: .userInitiated) {
-                ContentView.matchingNodes(in: root, query: query)
+                ContentView.matchingNodes(in: root, query: query, sizeMetric: metric)
             }
             let matches = await withTaskCancellationHandler {
                 await worker.value
@@ -242,6 +258,7 @@ struct ContentView: View {
 
             guard !Task.isCancelled,
                   activeSearchQuery == query,
+                  sizeMetric == metric,
                   scanner.root?.id == root.id else { return }
             searchResults = matches
             isSearching = false
@@ -257,7 +274,11 @@ struct ContentView: View {
         isSearching = false
     }
 
-    nonisolated private static func matchingNodes(in root: FileNode, query: String) -> [FileNode] {
+    nonisolated private static func matchingNodes(
+        in root: FileNode,
+        query: String,
+        sizeMetric: SizeMetric
+    ) -> [FileNode] {
         var pending = [root]
         var matches: [FileNode] = []
         var visited = 0
@@ -278,7 +299,9 @@ struct ContentView: View {
             let lhsIsExact = lhs.name.localizedCaseInsensitiveCompare(query) == .orderedSame
             let rhsIsExact = rhs.name.localizedCaseInsensitiveCompare(query) == .orderedSame
             if lhsIsExact != rhsIsExact { return lhsIsExact }
-            if lhs.totalSize != rhs.totalSize { return lhs.totalSize > rhs.totalSize }
+            let lhsSize = lhs.size(for: sizeMetric)
+            let rhsSize = rhs.size(for: sizeMetric)
+            if lhsSize != rhsSize { return lhsSize > rhsSize }
             return lhs.url.path.localizedStandardCompare(rhs.url.path) == .orderedAscending
         }
         return matches
@@ -329,7 +352,7 @@ struct ContentView: View {
                         .foregroundColor(.secondary)
                 }
 
-                if let ownerURL = node.fileNode.storageOwnerURL {
+                if sizeMetric == .allocated, let ownerURL = node.fileNode.storageOwnerURL {
                     Text("Hard link · storage counted elsewhere")
                         .font(.system(size: 10))
                         .foregroundColor(.secondary)
@@ -338,12 +361,12 @@ struct ContentView: View {
                         .help("Storage counted under \(ownerURL.path)")
                 }
 
-                Text(node.fileNode.formattedSize)
+                Text(node.fileNode.formattedSize(for: sizeMetric))
                     .font(.system(size: 10, weight: .semibold))
                     .monospacedDigit()
 
             } else if let root = scanner.root {
-                Text("\(root.fileCount) files, \(root.folderCount) folders — \(root.formattedSize)")
+                Text("\(root.fileCount) files, \(root.folderCount) folders — \(root.formattedSize(for: sizeMetric)) \(sizeMetric.rawValue)")
                     .font(.system(size: 10))
                     .foregroundColor(.secondary)
 
