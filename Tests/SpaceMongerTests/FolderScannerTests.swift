@@ -100,6 +100,102 @@ final class FolderScannerTests: XCTestCase {
         XCTAssertNil(remainingNode.storageOwnerURL)
     }
 
+    @MainActor
+    func testPreparedTrashUpdateRelocatesHierarchyInsideScannedTree() async throws {
+        let root = FileNode(
+            name: "root",
+            url: URL(fileURLWithPath: "/root", isDirectory: true),
+            actualSize: 0,
+            allocatedSize: 0,
+            isDirectory: true
+        )
+        let trash = FileNode(
+            name: ".Trash",
+            url: URL(fileURLWithPath: "/root/.Trash", isDirectory: true),
+            actualSize: 0,
+            allocatedSize: 0,
+            isDirectory: true
+        )
+        let folder = FileNode(
+            name: "folder",
+            url: URL(fileURLWithPath: "/root/folder", isDirectory: true),
+            actualSize: 0,
+            allocatedSize: 0,
+            isDirectory: true
+        )
+        let file = FileNode(
+            name: "file.bin",
+            url: URL(fileURLWithPath: "/root/folder/file.bin"),
+            actualSize: 1_024,
+            allocatedSize: 4_096,
+            isDirectory: false
+        )
+        folder.addChild(file)
+        root.addChild(folder)
+        root.addChild(trash)
+        root.sortChildrenBySize()
+
+        let originalTotal = root.totalSize
+        let scanner = FolderScanner()
+        scanner.root = root
+        var progressValues: [Int] = []
+        let destination = URL(fileURLWithPath: "/root/.Trash/folder", isDirectory: true)
+
+        let update = await scanner.prepareMoveToTrashInScannedTree(
+            folder,
+            destinationURL: destination,
+            progress: { progressValues.append($0) }
+        )
+        XCTAssertTrue(scanner.applyTrashTreeUpdate(try XCTUnwrap(update)))
+
+        let relocated = try XCTUnwrap(trash.children.first)
+        XCTAssertEqual(relocated.url, destination)
+        XCTAssertEqual(relocated.children.first?.url.path, "/root/.Trash/folder/file.bin")
+        XCTAssertEqual(root.totalSize, originalTotal)
+        XCTAssertEqual(progressValues.last, 2)
+        XCTAssertFalse(root.children.contains { $0 === folder })
+    }
+
+    func testRelocatedCopyUpdatesHardLinkOwnerPathInsideMovedHierarchy() throws {
+        let identity = FileIdentity(deviceID: 1, fileID: 42)
+        let folder = FileNode(
+            name: "folder",
+            url: URL(fileURLWithPath: "/root/folder", isDirectory: true),
+            actualSize: 0,
+            allocatedSize: 0,
+            isDirectory: true
+        )
+        let owner = FileNode(
+            name: "owner",
+            url: URL(fileURLWithPath: "/root/folder/owner"),
+            actualSize: 10,
+            allocatedSize: 4_096,
+            isDirectory: false,
+            fileIdentity: identity,
+            linkCount: 2
+        )
+        let link = FileNode(
+            name: "link",
+            url: URL(fileURLWithPath: "/root/folder/link"),
+            actualSize: 10,
+            allocatedSize: 0,
+            isDirectory: false,
+            storageOwnerURL: owner.url,
+            fileIdentity: identity,
+            linkCount: 2
+        )
+        folder.addChild(owner)
+        folder.addChild(link)
+        folder.sortChildrenBySize()
+
+        let copy = folder.relocatedCopy(
+            to: URL(fileURLWithPath: "/root/.Trash/folder", isDirectory: true)
+        )
+        let copiedLink = try XCTUnwrap(copy.children.first { $0.name == "link" })
+
+        XCTAssertEqual(copiedLink.storageOwnerURL?.path, "/root/.Trash/folder/owner")
+    }
+
     private func makeHardLinkFixture() throws -> URL {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
             "SpaceMongerTests-\(UUID().uuidString)",

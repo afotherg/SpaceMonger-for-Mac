@@ -2,6 +2,26 @@ import Darwin
 import Foundation
 import SwiftUI
 
+private struct ScannedTree: @unchecked Sendable {
+    let root: FileNode
+    let hardLinkedNodesByIdentity: [FileIdentity: [FileNode]]
+}
+
+struct TrashStorageTransfer: @unchecked Sendable {
+    let node: FileNode
+    let allocatedSize: Int64
+}
+
+struct TrashTreeUpdate: @unchecked Sendable {
+    let node: FileNode
+    let parent: FileNode
+    let destinationParent: FileNode?
+    let relocatedNode: FileNode?
+    let storageTransfers: [TrashStorageTransfer]
+    let removedHardLinkedNodes: [FileIdentity: Set<ObjectIdentifier>]
+    let addedHardLinkedNodes: [FileIdentity: [FileNode]]
+}
+
 /// Scans a directory tree asynchronously and publishes the result.
 @MainActor
 final class FolderScanner: ObservableObject {
@@ -15,6 +35,8 @@ final class FolderScanner: ObservableObject {
     // superseded scan's workers so they do not keep consuming disk bandwidth.
     private var generation = 0
     private var cancellation: ScanCancellation?
+    private var hardLinkedNodesByIdentity: [FileIdentity: [FileNode]] = [:]
+    private var hasHardLinkIndex = false
 
     func scan(url: URL) {
         generation += 1
@@ -25,6 +47,8 @@ final class FolderScanner: ObservableObject {
 
         isScanning = true
         root = nil
+        hardLinkedNodesByIdentity = [:]
+        hasHardLinkIndex = false
 
         if let attrs = try? FileManager.default.attributesOfFileSystem(forPath: url.path) {
             diskTotal = (attrs[.systemSize] as? NSNumber)?.int64Value ?? 0
@@ -32,14 +56,20 @@ final class FolderScanner: ObservableObject {
         }
 
         Task {
-            let node = await Task.detached(priority: .userInitiated) {
-                FolderScanner.scanDir(url: url, cancellation: cancellation)
+            let result = await Task.detached(priority: .userInitiated) {
+                let node = FolderScanner.scanDir(url: url, cancellation: cancellation)
+                node.sortChildrenBySize()
+                return ScannedTree(
+                    root: node,
+                    hardLinkedNodesByIdentity: FolderScanner.hardLinkIndex(in: node)
+                )
             }.value
 
             guard self.generation == gen else { return }
 
-            node.sortChildrenBySize()
-            self.root = node
+            self.root = result.root
+            self.hardLinkedNodesByIdentity = result.hardLinkedNodesByIdentity
+            self.hasHardLinkIndex = true
             self.treeRevision &+= 1
             self.isScanning = false
             self.cancellation = nil
@@ -51,6 +81,8 @@ final class FolderScanner: ObservableObject {
         cancellation?.cancel()
         cancellation = nil
         isScanning = false
+        hardLinkedNodesByIdentity = [:]
+        hasHardLinkIndex = false
     }
 
     /// Applies a move to Trash already completed by the caller without rescanning.
@@ -58,60 +90,185 @@ final class FolderScanner: ObservableObject {
     /// at that destination so totals remain accurate.
     @discardableResult
     func moveToTrashInScannedTree(_ node: FileNode, destinationURL: URL?) -> Bool {
-        guard let root, let parent = node.parent else { return false }
-        let destinationParent = destinationURL.flatMap {
-            findNode(at: $0.deletingLastPathComponent(), in: root)
+        guard let root else { return false }
+        if !hasHardLinkIndex {
+            hardLinkedNodesByIdentity = Self.hardLinkIndex(in: root)
+            hasHardLinkIndex = true
         }
-        guard parent.removeChild(node) else { return false }
+        guard let update = Self.prepareTrashTreeUpdate(
+            node: node,
+            destinationURL: destinationURL,
+            root: root,
+            hardLinkIndex: hardLinkedNodesByIdentity,
+            progress: nil
+        ) else { return false }
+        return applyTrashTreeUpdate(update)
+    }
 
-        if destinationParent == nil {
-            transferStorageOwnershipOutsideRemovedSubtree(node, in: root)
+    /// Prepares the potentially large part of a Trash update away from the main actor.
+    /// The returned update contains only a small set of mutations to apply atomically.
+    func prepareMoveToTrashInScannedTree(
+        _ node: FileNode,
+        destinationURL: URL?,
+        progress: @escaping @MainActor @Sendable (Int) -> Void
+    ) async -> TrashTreeUpdate? {
+        guard let root else { return nil }
+        if !hasHardLinkIndex {
+            hardLinkedNodesByIdentity = Self.hardLinkIndex(in: root)
+            hasHardLinkIndex = true
+        }
+        let hardLinkIndex = hardLinkedNodesByIdentity
+        return await Task.detached(priority: .userInitiated) {
+            Self.prepareTrashTreeUpdate(
+                node: node,
+                destinationURL: destinationURL,
+                root: root,
+                hardLinkIndex: hardLinkIndex
+            ) { completed in
+                Task { @MainActor in progress(completed) }
+            }
+        }.value
+    }
+
+    @discardableResult
+    func applyTrashTreeUpdate(_ update: TrashTreeUpdate) -> Bool {
+        guard update.parent.removeChild(update.node) else { return false }
+
+        for (identity, removedNodes) in update.removedHardLinkedNodes {
+            hardLinkedNodesByIdentity[identity]?.removeAll { candidate in
+                removedNodes.contains(ObjectIdentifier(candidate))
+            }
+            if hardLinkedNodesByIdentity[identity]?.isEmpty == true {
+                hardLinkedNodesByIdentity.removeValue(forKey: identity)
+            }
         }
 
-        if let destinationURL, let destinationParent {
-            destinationParent.addChild(node.relocatedCopy(to: destinationURL))
+        for transfer in update.storageTransfers {
+            transfer.node.takeStorageOwnership(allocatedSize: transfer.allocatedSize)
+        }
+
+        if let destinationParent = update.destinationParent,
+           let relocatedNode = update.relocatedNode {
+            destinationParent.addChild(relocatedNode)
+            for (identity, nodes) in update.addedHardLinkedNodes {
+                hardLinkedNodesByIdentity[identity, default: []].append(contentsOf: nodes)
+            }
         }
         treeRevision &+= 1
         return true
     }
 
-    private func transferStorageOwnershipOutsideRemovedSubtree(
-        _ removedNode: FileNode,
-        in root: FileNode
-    ) {
-        var allocationsByIdentity: [FileIdentity: Int64] = [:]
-        var removedPending = [removedNode]
-        while let candidate = removedPending.popLast() {
-            if !candidate.isDirectory,
-               candidate.allocatedSize > 0,
-               let identity = candidate.fileIdentity {
-                allocationsByIdentity[identity] = candidate.allocatedSize
-            }
-            removedPending.append(contentsOf: candidate.children)
+    nonisolated private static func prepareTrashTreeUpdate(
+        node: FileNode,
+        destinationURL: URL?,
+        root: FileNode,
+        hardLinkIndex: [FileIdentity: [FileNode]],
+        progress: ((Int) -> Void)?
+    ) -> TrashTreeUpdate? {
+        guard let parent = node.parent else { return nil }
+        let destinationParent = destinationURL.flatMap {
+            findNode(at: $0.deletingLastPathComponent(), in: root)
         }
-        guard !allocationsByIdentity.isEmpty else { return }
+        let relocatesInsideTree = destinationURL != nil && destinationParent != nil
+        let totalEntries = max(
+            1,
+            node.fileCount + node.folderCount + (node.isDirectory ? 1 : 0)
+        )
 
-        var pending = [root]
-        while let candidate = pending.popLast(), !allocationsByIdentity.isEmpty {
-            if !candidate.isDirectory,
-               candidate.allocatedSize == 0,
-               let identity = candidate.fileIdentity,
-               let allocation = allocationsByIdentity.removeValue(forKey: identity) {
-                candidate.takeStorageOwnership(allocatedSize: allocation)
-            } else {
-                pending.append(contentsOf: candidate.children)
+        var completed = 0
+        var removedHardLinkedNodes: [FileIdentity: Set<ObjectIdentifier>] = [:]
+        var storageTransfers: [TrashStorageTransfer] = []
+        var pending = [node]
+        while let candidate = pending.popLast() {
+            completed += 1
+            if completed.isMultiple(of: 256) {
+                progress?(relocatesInsideTree ? completed / 2 : completed)
+            }
+            pending.append(contentsOf: candidate.children)
+
+            guard candidate.linkCount > 1,
+                  let identity = candidate.fileIdentity else { continue }
+            removedHardLinkedNodes[identity, default: []].insert(ObjectIdentifier(candidate))
+
+            guard destinationParent == nil,
+                  candidate.allocatedSize > 0,
+                  let replacement = hardLinkIndex[identity]?.first(where: {
+                      $0.allocatedSize == 0 && !isDescendant($0, of: node)
+                  }) else { continue }
+            storageTransfers.append(TrashStorageTransfer(
+                node: replacement,
+                allocatedSize: candidate.allocatedSize
+            ))
+        }
+
+        var relocatedNode: FileNode?
+        var addedHardLinkedNodes: [FileIdentity: [FileNode]] = [:]
+        if let destinationURL, destinationParent != nil {
+            var copied = 0
+            let firstPassBudget = totalEntries / 2
+            let secondPassBudget = totalEntries - firstPassBudget
+            relocatedNode = node.relocatedCopy(to: destinationURL) { copy in
+                copied += 1
+                if copy.linkCount > 1, let identity = copy.fileIdentity {
+                    addedHardLinkedNodes[identity, default: []].append(copy)
+                }
+                if copied.isMultiple(of: 256) {
+                    progress?(firstPassBudget + copied * secondPassBudget / totalEntries)
+                }
             }
         }
+        progress?(totalEntries)
+
+        return TrashTreeUpdate(
+            node: node,
+            parent: parent,
+            destinationParent: destinationParent,
+            relocatedNode: relocatedNode,
+            storageTransfers: storageTransfers,
+            removedHardLinkedNodes: removedHardLinkedNodes,
+            addedHardLinkedNodes: addedHardLinkedNodes
+        )
     }
 
-    private func findNode(at url: URL, in root: FileNode) -> FileNode? {
-        let targetPath = url.standardizedFileURL.path
-        var pending = [root]
-        while let candidate = pending.popLast() {
-            if candidate.url.standardizedFileURL.path == targetPath { return candidate }
-            pending.append(contentsOf: candidate.children)
+    nonisolated private static func isDescendant(_ candidate: FileNode, of ancestor: FileNode) -> Bool {
+        var current: FileNode? = candidate
+        while let node = current {
+            if node === ancestor { return true }
+            current = node.parent
         }
-        return nil
+        return false
+    }
+
+    nonisolated private static func findNode(at url: URL, in root: FileNode) -> FileNode? {
+        let targetPath = url.standardizedFileURL.path
+        let rootPath = root.url.standardizedFileURL.path
+        if targetPath == rootPath { return root }
+
+        let prefix = rootPath == "/" ? "/" : rootPath + "/"
+        guard targetPath.hasPrefix(prefix) else { return nil }
+        let relativePath = String(targetPath.dropFirst(prefix.count))
+        var current = root
+        for component in relativePath.split(separator: "/").map(String.init) {
+            guard let child = current.children.first(where: { $0.name == component }) else {
+                return nil
+            }
+            current = child
+        }
+        return current
+    }
+
+    nonisolated private static func hardLinkIndex(
+        in root: FileNode
+    ) -> [FileIdentity: [FileNode]] {
+        var result: [FileIdentity: [FileNode]] = [:]
+        var pending = [root]
+        while let node = pending.popLast() {
+            if node.linkCount > 1, let identity = node.fileIdentity {
+                result[identity, default: []].append(node)
+            }
+            pending.append(contentsOf: node.children)
+        }
+        return result
     }
 
     // MARK: - Background scanning (no actor isolation)
@@ -203,7 +360,8 @@ final class FolderScanner: ObservableObject {
                             isDirectory: entry.isDirectory,
                             modificationDate: entry.modificationDate,
                             storageOwnerURL: storageOwnerURL,
-                            fileIdentity: entry.identity
+                            fileIdentity: entry.identity,
+                            linkCount: entry.linkCount
                         )
                         child.parent = work.node
                         work.node.children.append(child)

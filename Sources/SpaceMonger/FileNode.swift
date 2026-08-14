@@ -24,6 +24,7 @@ final class FileNode: Identifiable, @unchecked Sendable {
     /// Another path owns this file object's allocated bytes when it is a hard link.
     private(set) var storageOwnerURL: URL?
     let fileIdentity: FileIdentity?
+    let linkCount: UInt32
 
     var children: [FileNode] = []
     weak var parent: FileNode?
@@ -42,7 +43,8 @@ final class FileNode: Identifiable, @unchecked Sendable {
         isDirectory: Bool,
         modificationDate: Date? = nil,
         storageOwnerURL: URL? = nil,
-        fileIdentity: FileIdentity? = nil
+        fileIdentity: FileIdentity? = nil,
+        linkCount: UInt32 = 1
     ) {
         self.name = name
         self.url = url
@@ -52,6 +54,7 @@ final class FileNode: Identifiable, @unchecked Sendable {
         self.modificationDate = modificationDate
         self.storageOwnerURL = storageOwnerURL
         self.fileIdentity = fileIdentity
+        self.linkCount = linkCount
     }
 
     /// Recursive total size of this node and all descendants.
@@ -120,13 +123,33 @@ final class FileNode: Identifiable, @unchecked Sendable {
     /// Adds a direct child and refreshes cached totals through the root.
     func addChild(_ child: FileNode) {
         child.parent = self
-        children.append(child)
+        let insertionIndex = children.firstIndex {
+            $0.totalSize < child.totalSize
+        } ?? children.endIndex
+        children.insert(child, at: insertionIndex)
         refreshCachedAggregatesUpward()
     }
 
     /// Copies a node hierarchy at a new filesystem location. Trash may rename an
     /// item to avoid a collision, so the destination URL is authoritative.
-    func relocatedCopy(to destinationURL: URL) -> FileNode {
+    func relocatedCopy(
+        to destinationURL: URL,
+        didCopy: ((FileNode) -> Void)? = nil
+    ) -> FileNode {
+        relocatedCopy(
+            to: destinationURL,
+            sourceRootURL: url,
+            destinationRootURL: destinationURL,
+            didCopy: didCopy
+        )
+    }
+
+    private func relocatedCopy(
+        to destinationURL: URL,
+        sourceRootURL: URL,
+        destinationRootURL: URL,
+        didCopy: ((FileNode) -> Void)?
+    ) -> FileNode {
         let copy = FileNode(
             name: destinationURL.lastPathComponent,
             url: destinationURL,
@@ -134,21 +157,53 @@ final class FileNode: Identifiable, @unchecked Sendable {
             allocatedSize: allocatedSize,
             isDirectory: isDirectory,
             modificationDate: modificationDate,
-            storageOwnerURL: storageOwnerURL,
-            fileIdentity: fileIdentity
+            storageOwnerURL: storageOwnerURL.map {
+                Self.relocatedURL(
+                    $0,
+                    from: sourceRootURL,
+                    to: destinationRootURL
+                )
+            },
+            fileIdentity: fileIdentity,
+            linkCount: linkCount
         )
         copy.children = children.map { child in
             let childCopy = child.relocatedCopy(
                 to: destinationURL.appendingPathComponent(
                     child.name,
                     isDirectory: child.isDirectory
-                )
+                ),
+                sourceRootURL: sourceRootURL,
+                destinationRootURL: destinationRootURL,
+                didCopy: didCopy
             )
             childCopy.parent = copy
             return childCopy
         }
-        copy.sortChildrenBySize()
+        // The original hierarchy is already sorted and fully cached. Reusing those
+        // aggregates avoids recursively sorting the complete moved hierarchy again.
+        copy._totalSize = _totalSize
+        copy._logicalTotalSize = _logicalTotalSize
+        copy._fileCount = _fileCount
+        copy._folderCount = _folderCount
+        didCopy?(copy)
         return copy
+    }
+
+    private static func relocatedURL(
+        _ candidate: URL,
+        from sourceRoot: URL,
+        to destinationRoot: URL
+    ) -> URL {
+        let candidatePath = candidate.standardizedFileURL.path
+        let sourcePath = sourceRoot.standardizedFileURL.path
+        if candidatePath == sourcePath { return destinationRoot }
+
+        let prefix = sourcePath == "/" ? "/" : sourcePath + "/"
+        guard candidatePath.hasPrefix(prefix) else { return candidate }
+        return destinationRoot.appendingPathComponent(
+            String(candidatePath.dropFirst(prefix.count))
+        )
     }
 
     /// Makes a previously uncounted hard link own the shared file allocation.
@@ -161,7 +216,6 @@ final class FileNode: Identifiable, @unchecked Sendable {
 
     private func refreshCachedAggregatesUpward() {
         if isDirectory {
-            children.sort { $0.totalSize > $1.totalSize }
             _totalSize = children.reduce(0) { $0 + $1.totalSize }
             _logicalTotalSize = children.reduce(0) { $0 + $1.logicalTotalSize }
             _fileCount = children.reduce(0) { $0 + $1.fileCount }
@@ -174,7 +228,21 @@ final class FileNode: Identifiable, @unchecked Sendable {
             _fileCount = 1
             _folderCount = 0
         }
-        parent?.refreshCachedAggregatesUpward()
+        if let parent {
+            parent.repositionChild(self)
+            parent.refreshCachedAggregatesUpward()
+        }
+    }
+
+    /// Maintains size ordering after one child's aggregate changes without sorting
+    /// every sibling again. This makes incremental Trash updates linear, not n log n.
+    private func repositionChild(_ child: FileNode) {
+        guard let oldIndex = children.firstIndex(where: { $0 === child }) else { return }
+        children.remove(at: oldIndex)
+        let newIndex = children.firstIndex {
+            $0.totalSize < child.totalSize
+        } ?? children.endIndex
+        children.insert(child, at: newIndex)
     }
 
     var formattedSize: String { formatBytes(totalSize) }

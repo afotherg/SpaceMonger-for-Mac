@@ -11,6 +11,9 @@ struct ContentView: View {
     @State private var isSearching = false
     @State private var searchTask: Task<Void, Never>?
     @State private var sizeMetric: SizeMetric = .allocated
+    @State private var trashProgress: TrashProgress?
+    @State private var trashTask: Task<Void, Never>?
+    @State private var trashFailure: TrashFailure?
 
     /// The node currently displayed as the treemap root (zoom-aware).
     private var currentRoot: FileNode? {
@@ -61,6 +64,19 @@ struct ContentView: View {
                 .background(.bar)
         }
         .frame(minWidth: 900, minHeight: 600)
+        .disabled(trashProgress != nil)
+        .overlay {
+            if let trashProgress {
+                trashProgressOverlay(trashProgress)
+            }
+        }
+        .alert(item: $trashFailure) { failure in
+            Alert(
+                title: Text("Couldn’t Move Item to Trash"),
+                message: Text(failure.message),
+                dismissButton: .default(Text("OK"))
+            )
+        }
         .onChange(of: searchText) { newValue in
             if newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 clearSearch()
@@ -458,6 +474,55 @@ struct ContentView: View {
 
     // MARK: - Actions
 
+    @ViewBuilder
+    private func trashProgressOverlay(_ progress: TrashProgress) -> some View {
+        ZStack {
+            Color.black.opacity(0.28)
+                .ignoresSafeArea()
+
+            VStack(spacing: 14) {
+                Image(systemName: "trash")
+                    .font(.system(size: 34))
+                    .foregroundColor(.secondary)
+
+                Text(progress.phase.title)
+                    .font(.headline)
+                Text(progress.itemName)
+                    .font(.callout)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .frame(maxWidth: 340)
+
+                if progress.phase == .moving {
+                    ProgressView()
+                        .progressViewStyle(.linear)
+                        .frame(width: 300)
+                    Text("macOS is processing the item")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                } else {
+                    ProgressView(
+                        value: Double(progress.completed),
+                        total: Double(max(1, progress.total))
+                    )
+                    .progressViewStyle(.linear)
+                    .frame(width: 300)
+                    Text("\(progress.completed.formatted()) of \(progress.total.formatted()) entries")
+                        .font(.caption.monospacedDigit())
+                        .foregroundColor(.secondary)
+                }
+            }
+            .padding(.horizontal, 30)
+            .padding(.vertical, 24)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+            .overlay {
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(Color.primary.opacity(0.12))
+            }
+            .shadow(radius: 18)
+        }
+    }
+
     private func openFolder() {
         let panel = NSOpenPanel()
         panel.canChooseFiles = false
@@ -512,27 +577,97 @@ struct ContentView: View {
         clearSearch()
     }
 
-    /// Move a file/folder to the system Trash, then mirror that move in memory.
-    /// A failed Trash operation leaves the display unchanged.
+    /// Move a file/folder to the system Trash as one modal workflow. Filesystem and
+    /// model preparation run away from the main actor so the progress UI stays live.
     private func moveToTrash(node: FileNode) {
-        var resultingURL: NSURL?
-        do {
-            try FileManager.default.trashItem(
-                at: node.url,
-                resultingItemURL: &resultingURL
-            )
-        } catch {
-            return
-        }
+        guard trashProgress == nil, node.parent != nil else { return }
 
-        if let deletedLevel = zoomStack.firstIndex(where: { $0 === node }) {
-            zoomStack = Array(zoomStack.prefix(deletedLevel))
-        }
-        hoveredNode = nil
-        _ = scanner.moveToTrashInScannedTree(
-            node,
-            destinationURL: resultingURL as URL?
+        let operationID = UUID()
+        let entryCount = node.fileCount + node.folderCount + (node.isDirectory ? 1 : 0)
+        trashProgress = TrashProgress(
+            id: operationID,
+            itemName: node.name,
+            phase: .moving,
+            completed: 0,
+            total: max(1, entryCount)
         )
+
+        let sourceURL = node.url
+        trashTask = Task { @MainActor in
+            do {
+                let destinationURL = try await Task.detached(priority: .userInitiated) {
+                    var resultingURL: NSURL?
+                    try FileManager.default.trashItem(
+                        at: sourceURL,
+                        resultingItemURL: &resultingURL
+                    )
+                    return resultingURL as URL?
+                }.value
+
+                guard var progress = trashProgress, progress.id == operationID else { return }
+                progress.phase = .updating
+                trashProgress = progress
+
+                guard let update = await scanner.prepareMoveToTrashInScannedTree(
+                    node,
+                    destinationURL: destinationURL,
+                    progress: { completed in
+                        guard var current = trashProgress,
+                              current.id == operationID,
+                              current.phase == .updating else { return }
+                        current.completed = min(current.total, completed)
+                        trashProgress = current
+                    }
+                ), scanner.applyTrashTreeUpdate(update) else {
+                    throw TrashOperationError.modelUpdateFailed
+                }
+
+                if let deletedLevel = zoomStack.firstIndex(where: { $0 === node }) {
+                    zoomStack = Array(zoomStack.prefix(deletedLevel))
+                }
+                hoveredNode = nil
+                trashProgress = nil
+            } catch {
+                if trashProgress?.id == operationID {
+                    trashProgress = nil
+                }
+                trashFailure = TrashFailure(message: error.localizedDescription)
+            }
+            trashTask = nil
+        }
+    }
+}
+
+private struct TrashProgress: Identifiable {
+    enum Phase {
+        case moving
+        case updating
+
+        var title: String {
+            switch self {
+            case .moving: return "Moving to Trash…"
+            case .updating: return "Updating disk map…"
+            }
+        }
+    }
+
+    let id: UUID
+    let itemName: String
+    var phase: Phase
+    var completed: Int
+    let total: Int
+}
+
+private struct TrashFailure: Identifiable {
+    let id = UUID()
+    let message: String
+}
+
+private enum TrashOperationError: LocalizedError {
+    case modelUpdateFailed
+
+    var errorDescription: String? {
+        "The item was moved to Trash, but SpaceMonger could not update its disk map. Reopen the scanned folder to refresh it."
     }
 }
 
