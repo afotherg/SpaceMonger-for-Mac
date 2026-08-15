@@ -31,6 +31,7 @@ struct TreeMapView: View {
 
     private let titleHeight = TreeMapLayoutEngine.titleHeight
     private let minLabel: CGFloat = 22   // minimum rect width to draw text
+    private let hoverBorderWidth: CGFloat = 1.5
 
     var body: some View {
         // Read state while evaluating the SwiftUI body, not only inside Canvas's
@@ -49,7 +50,10 @@ struct TreeMapView: View {
                          hovered: highlightedNode === node.fileNode)
                 }
 
-                if let highlightedNode {
+                if let highlightedNode,
+                   let highlightedDisplayNode = renderedNodes.last(where: {
+                       $0.fileNode === highlightedNode
+                   }) {
                     // Dim the complete map, then repaint the hovered item at full
                     // brightness. A folder's descendants are repainted as well so
                     // its contents remain visible as one highlighted region.
@@ -58,14 +62,29 @@ struct TreeMapView: View {
                         with: .color(.black.opacity(0.48))
                     )
 
+                    // Layout and pointer updates can arrive on adjacent run-loop
+                    // turns. Clip the spotlight to its authoritative layout rectangle
+                    // so stale descendant geometry can never paint over neighbours.
+                    var spotlightContext = ctx
+                    spotlightContext.clip(to: Path(highlightedDisplayNode.rect))
                     for node in renderedNodes where belongsToSpotlight(
                         node.fileNode,
                         highlightedNode: highlightedNode
                     ) {
                         draw(
                             node: node,
-                            in: ctx,
+                            in: spotlightContext,
                             hovered: highlightedNode === node.fileNode
+                        )
+                    }
+
+                    // Descendants are intentionally painted after their directory's
+                    // background. Repaint the hover outline last so their fills and
+                    // antialiased borders cannot obscure any side of it.
+                    if highlightedDisplayNode.isDirectory {
+                        drawHoverOutline(
+                            around: highlightedDisplayNode.rect,
+                            in: spotlightContext
                         )
                     }
                 }
@@ -116,6 +135,9 @@ struct TreeMapView: View {
 
     private func updateLayout(for size: CGSize) {
         guard size.width > 0, size.height > 0 else { return }
+        // A DisplayNode carries geometry from one specific layout. Do not retain it
+        // while replacing that layout with rectangles computed for another revision.
+        hoveredNode = nil
         layoutNodes = TreeMapLayoutEngine.layout(
             root: root,
             in: CGRect(origin: .zero, size: size),
@@ -150,6 +172,17 @@ struct TreeMapView: View {
         }
     }
 
+    private func drawHoverOutline(around rect: CGRect, in ctx: GraphicsContext) {
+        let inset = hoverBorderWidth / 2
+        let outlineRect = rect.insetBy(dx: inset, dy: inset)
+        guard outlineRect.width > 0, outlineRect.height > 0 else { return }
+        ctx.stroke(
+            Path(outlineRect),
+            with: .color(.white.opacity(0.9)),
+            lineWidth: hoverBorderWidth
+        )
+    }
+
     private func drawDirectory(
         node: DisplayNode, rect: CGRect, color: Color,
         in ctx: GraphicsContext, hovered: Bool
@@ -173,7 +206,7 @@ struct TreeMapView: View {
 
         // Border — bright white on hover (replaces the 3D-border drawing)
         let borderColor: Color = hovered ? .white.opacity(0.9) : .black.opacity(0.45)
-        let lineWidth: CGFloat = hovered ? 1.5 : 0.5
+        let lineWidth: CGFloat = hovered ? hoverBorderWidth : 0.5
         ctx.stroke(Path(rect), with: .color(borderColor), lineWidth: lineWidth)
     }
 
