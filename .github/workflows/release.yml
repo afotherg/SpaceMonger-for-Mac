@@ -19,6 +19,7 @@ permissions:
 jobs:
   release:
     runs-on: macos-15
+    timeout-minutes: 60
 
     steps:
       - name: Check out source
@@ -33,10 +34,52 @@ jobs:
             exit 1
           fi
 
+      - name: Import Developer ID certificate
+        env:
+          CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          set -euo pipefail
+          for name in CERTIFICATE_BASE64 CERTIFICATE_PASSWORD APPLE_TEAM_ID APPLE_ID APPLE_APP_PASSWORD; do
+            if [[ -z "${!name}" ]]; then
+              echo "::error::Missing signing/notarization secret: $name. See Docs/RELEASING.md."
+              exit 1
+            fi
+          done
+          umask 077
+          keychain="$RUNNER_TEMP/release-signing.keychain-db"
+          certificate="$RUNNER_TEMP/developer-id.p12"
+          password="$(openssl rand -hex 32)"
+          echo "::add-mask::$password"
+          printf '%s' "$CERTIFICATE_BASE64" | base64 --decode > "$certificate"
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 3600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          security import "$certificate" -P "$CERTIFICATE_PASSWORD" -k "$keychain" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain" > /dev/null
+          security list-keychains -d user -s "$keychain"
+          rm -f "$certificate"
+          identity="$(security find-identity -v -p codesigning "$keychain" | awk -v team="($APPLE_TEAM_ID)" '/"Developer ID Application:/ && index($0, team) { print $2 }')"
+          if [[ ! "$identity" =~ ^[A-Fa-f0-9]{40}$ ]]; then
+            echo "::error::Expected exactly one valid Developer ID Application identity for APPLE_TEAM_ID."
+            exit 1
+          fi
+          echo "SIGNING_IDENTITY=$identity" >> "$GITHUB_ENV"
+          xcrun notarytool store-credentials release-notary --keychain "$keychain" \
+            --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD"
+
       - name: Build universal app bundle
         env:
           RELEASE_TAG: ${{ inputs.tag }}
         run: Scripts/package-app.sh "$RELEASE_TAG"
+
+      - name: Notarize and staple app
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: Scripts/notarize-app.sh "$RELEASE_TAG" "$RUNNER_TEMP/release-signing.keychain-db"
 
       - name: Create GitHub release
         env:
@@ -55,3 +98,12 @@ jobs:
             arguments+=(--prerelease)
           fi
           gh release create "${arguments[@]}"
+
+      - name: Remove signing credentials
+        if: ${{ always() }}
+        run: |
+          keychain="$RUNNER_TEMP/release-signing.keychain-db"
+          if [[ -f "$keychain" ]]; then
+            security delete-keychain "$keychain"
+          fi
+          rm -f "$RUNNER_TEMP/developer-id.p12"

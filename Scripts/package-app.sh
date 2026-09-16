@@ -55,7 +55,12 @@ cat > "$APP_BUNDLE/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-codesign --force --deep --sign - "$APP_BUNDLE"
+if [[ -n "${SIGNING_IDENTITY:-}" ]]; then
+    codesign --force --options runtime --timestamp --sign "$SIGNING_IDENTITY" "$APP_BUNDLE"
+else
+    codesign --force --sign - "$APP_BUNDLE"
+fi
+codesign --verify --deep --strict --verbose=2 "$APP_BUNDLE"
 ditto -c -k --sequesterRsrc --keepParent "$APP_BUNDLE" "$ARCHIVE"
 
 echo "Created $ARCHIVE"

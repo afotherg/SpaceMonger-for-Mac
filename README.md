@@ -28,26 +28,13 @@ On the right hand side of the github page, click on Releases, and download the .
 
 Unzip the file, and copy the "SpaceMonger for Mac" file to your Applications folder.
 
-In Applications, double click on SpaceMonger for Mac, and you will get a warning message:
+New releases produced by the signing workflow are Developer ID signed and notarized
+by Apple. Open the app normally; macOS may show its standard first-open confirmation
+and ask for permission to access protected folders such as Documents or Downloads.
 
-<img width="259" height="292" alt="Warning Message" src="https://github.com/user-attachments/assets/c40b7d67-45bd-4a36-98e4-674f52cb514f" />
-
-Click "Done". Then go to System Settings..." and "Privacy & Security", scroll down, and you will see:
-
-<img width="475" height="195" alt="Allow Application" src="https://github.com/user-attachments/assets/75b3f515-ce96-4d61-8842-f4a1a0c45340" />
-
-Click "Open Anyway", and then click "Open Anyway" again.
-
-
-<img width="260" height="345" alt="Open Anyway" src="https://github.com/user-attachments/assets/05c29249-0880-4ffb-b1a8-836ccec77c49" />
-
-You then enter your password, or Touch ID.
-
-<img width="258" height="334" alt="Password Confirm" src="https://github.com/user-attachments/assets/dd8638b9-9aed-4307-aad5-9e800213b511" />
-
-You only have to do this once!
-
-Next, dependent on which directory you open, you may have to give permission to access Downloads, Photos, Documents, etc.
+Older releases (including v0.9.6) are ad-hoc signed and may require **System Settings
+→ Privacy & Security → Open Anyway**. Download a signed release when available to
+avoid that workaround.
 
 ## Building
 
@@ -87,10 +74,13 @@ Releases are created on demand with GitHub Actions:
 3. Enter a new semantic version tag such as `v1.0.0` and optionally mark it as a
    pre-release.
 
-The workflow builds a Universal 2 app for Intel and Apple silicon, applies an ad-hoc
-signature, packages it as a ZIP, creates the tag, and publishes a GitHub Release with
-automatically generated release notes. The app is not notarized, so macOS may require
-users to approve it the first time it is opened.
+The workflow builds a Universal 2 app for Intel and Apple silicon, signs it with a
+Developer ID Application certificate, submits it to Apple for notarization, and
+staples the accepted ticket before publishing the ZIP. A failed signing or
+notarization step prevents publication.
+
+Before the first signed release, configure the five Apple Actions secrets described
+in [the release setup guide](Docs/RELEASING.md).
 
 ## Project Structure
 

@@ -2,3 +2,9 @@
 .DS_Store
 dist/
 tmp/
+
+# Apple signing credentials
+*.p12
+*.p8
+*.key
+*.certSigningRequest
