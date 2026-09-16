@@ -1,0 +1,30 @@
+name: Check Notarization
+on:
+  workflow_dispatch:
+    inputs:
+      submission_id:
+        description: Apple notarization submission UUID
+        required: true
+        type: string
+permissions:
+  contents: read
+jobs:
+  status:
+    runs-on: macos-15
+    timeout-minutes: 5
+    steps:
+      - name: Check Apple processing status
+        env:
+          SUBMISSION_ID: ${{ inputs.submission_id }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          set -euo pipefail
+          [[ "$SUBMISSION_ID" =~ ^[0-9a-fA-F-]{36}$ ]]
+          auth=(--apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD")
+          xcrun notarytool info "$SUBMISSION_ID" "${auth[@]}" --output-format json | tee "$RUNNER_TEMP/status.json"
+          status="$(jq -r .status "$RUNNER_TEMP/status.json")"
+          if [[ "$status" == Accepted || "$status" == Invalid ]]; then
+            xcrun notarytool log "$SUBMISSION_ID" "${auth[@]}"
+          fi
