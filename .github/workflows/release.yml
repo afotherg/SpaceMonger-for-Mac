@@ -15,6 +15,7 @@ on:
 
 permissions:
   contents: write
+  actions: read
 
 jobs:
   release:
@@ -71,15 +72,53 @@ jobs:
           xcrun notarytool store-credentials release-notary --keychain "$keychain" \
             --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD"
 
+      - name: Restore pending submission on retry
+        id: pending
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          name="notarization-$RELEASE_TAG"
+          count="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts" --jq "[.artifacts[] | select(.name == \"$name\" and .expired == false)] | length")"
+          if [[ "$count" == 1 ]]; then
+            gh run download "$GITHUB_RUN_ID" --name "$name" --dir dist
+            echo "restored=true" >> "$GITHUB_OUTPUT"
+          elif [[ "$count" == 0 ]]; then
+            echo "restored=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Unexpected duplicate notarization artifacts" >&2
+            exit 1
+          fi
+
       - name: Build universal app bundle
+        if: steps.pending.outputs.restored != 'true'
         env:
           RELEASE_TAG: ${{ inputs.tag }}
         run: Scripts/package-app.sh "$RELEASE_TAG"
 
+      - name: Submit to Apple
+        if: steps.pending.outputs.restored != 'true'
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: Scripts/notarize-app.sh "$RELEASE_TAG" "$RUNNER_TEMP/release-signing.keychain-db" dist submit
+
+      - name: Preserve submitted app for retries
+        if: steps.pending.outputs.restored != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: notarization-${{ inputs.tag }}
+          path: |
+            dist/*.zip
+            dist/notarization-submission.json
+            dist/archive.sha256
+          if-no-files-found: error
+          retention-days: 30
+
       - name: Notarize and staple app
         env:
           RELEASE_TAG: ${{ inputs.tag }}
-        run: Scripts/notarize-app.sh "$RELEASE_TAG" "$RUNNER_TEMP/release-signing.keychain-db"
+        run: Scripts/notarize-app.sh "$RELEASE_TAG" "$RUNNER_TEMP/release-signing.keychain-db" dist finish
 
       - name: Create GitHub release
         env:

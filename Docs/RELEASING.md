@@ -13,6 +13,9 @@ entitlements and does not need a provisioning profile.
    from Keychain Access. Keep the private key on the Mac that creates the CSR.
 2. In Keychain Access → My Certificates, export that certificate **with its private
    key** as a password-protected `.p12`. Export only this signing identity.
+   If exporting with OpenSSL 3, use `-keypbe PBE-SHA1-3DES
+   -certpbe PBE-SHA1-3DES -macalg sha1` for macOS Keychain import compatibility.
+   Verify the `.p12` imports successfully before uploading it.
 3. Find your **Team ID** in Apple Developer → Membership details. Do not substitute
    the identifier shown in an Apple Development certificate name.
 4. At https://account.apple.com, create an app-specific password for notarization.
@@ -52,9 +55,12 @@ Gatekeeper verification, and publishing the ZIP. Credentials are removed even if
 an earlier step fails. Unsigned releases are never a fallback.
 
 Apple can take longer to process a new account's first submission. If the 40-minute
-wait expires, the workflow fails without publishing. The submission ID appears in
-the run output; check it using `notarytool info` before retrying. Rejected submissions
-include Apple's log in the failed step output. Renew the certificate and update the
+wait expires, the workflow fails without publishing. The submitted ZIP and submission
+ID are saved as a GitHub Actions artifact for 30 days. Use **Re-run all jobs** on that
+same run to resume the saved submission without rebuilding or uploading again.
+The **Check Notarization** workflow can query a submission ID without building.
+Rejected submissions include Apple's log in the failed step output. Artifacts from
+an in-progress or rejected submission are not ready for distribution. Renew the certificate and update the
 secrets before expiry, and replace a revoked app-specific password when needed.
 
 The stapled ticket is inside the app, so the final ZIP supports offline Gatekeeper
