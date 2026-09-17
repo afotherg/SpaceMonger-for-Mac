@@ -18,8 +18,10 @@ if [[ "$MODE" != developer-id && "$MODE" != app-store ]]; then
     exit 2
 fi
 if [[ "$MODE" == app-store ]]; then
-    : "${SIGNING_IDENTITY:?Set SIGNING_IDENTITY to a Mac App Distribution identity}"
+    : "${SIGNING_IDENTITY:?Set SIGNING_IDENTITY to an Apple Distribution identity}"
     : "${INSTALLER_SIGNING_IDENTITY:?Set INSTALLER_SIGNING_IDENTITY to a Mac Installer Distribution identity}"
+    : "${APP_STORE_PROVISIONING_PROFILE:?Set APP_STORE_PROVISIONING_PROFILE to the SpaceMonger Mac App Store profile}"
+    [[ -f "$APP_STORE_PROVISIONING_PROFILE" ]] || { echo "Provisioning profile not found" >&2; exit 2; }
 fi
 
 if [[ -z "$BUILD_VERSION" ]]; then
@@ -71,9 +73,7 @@ cat > "$APP_BUNDLE/Contents/Info.plist" <<PLIST
 PLIST
 
 if [[ "$MODE" == app-store ]]; then
-    if [[ -n "${APP_STORE_PROVISIONING_PROFILE:-}" ]]; then
-        cp "$APP_STORE_PROVISIONING_PROFILE" "$APP_BUNDLE/Contents/embedded.provisionprofile"
-    fi
+    cp "$APP_STORE_PROVISIONING_PROFILE" "$APP_BUNDLE/Contents/embedded.provisionprofile"
     codesign --force --timestamp --entitlements Assets/AppStore.entitlements \
         --sign "$SIGNING_IDENTITY" "$APP_BUNDLE"
 elif [[ -n "${SIGNING_IDENTITY:-}" ]]; then

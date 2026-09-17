@@ -5,8 +5,8 @@ This is a separate distribution path from the Developer ID signed, notarized Git
 ## Account setup
 
 1. In Apple Developer, register the explicit bundle ID `com.github.afotherg.spacemonger-for-mac` for macOS. Use this exact ID in the App Store Connect app record.
-2. Create **Mac App Distribution** and **Mac Installer Distribution** certificates and install both with their private keys in Keychain. The existing Developer ID certificate cannot sign this submission.
-3. If the account's distribution configuration supplies a Mac App Store provisioning profile for this bundle ID, set `APP_STORE_PROVISIONING_PROFILE` to its local path before packaging.
+2. Create **Apple Distribution** (or Mac App Distribution) and **Mac Installer Distribution** certificates and install both with their private keys in Keychain. Xcode currently displays the installer identity as `3rd Party Mac Developer Installer`. The existing Developer ID certificate cannot sign this submission.
+3. Create a **Mac App Store Connect** distribution provisioning profile for this explicit bundle ID and Apple Distribution certificate. Download it, and set `APP_STORE_PROVISIONING_PROFILE` to its local path before packaging.
 4. Create the macOS app record in App Store Connect. Set its version to the same version passed to the package script.
 
 ## Build and upload
@@ -14,8 +14,9 @@ This is a separate distribution path from the Developer ID signed, notarized Git
 From the repository root, with the certificate names or SHA-1 hashes installed in Keychain:
 
 ```sh
-export SIGNING_IDENTITY='Mac App Distribution: YOUR NAME (TEAMID)'
-export INSTALLER_SIGNING_IDENTITY='Mac Installer Distribution: YOUR NAME (TEAMID)'
+export SIGNING_IDENTITY='Apple Distribution: YOUR NAME (TEAMID)'
+export INSTALLER_SIGNING_IDENTITY='3rd Party Mac Developer Installer: YOUR NAME (TEAMID)'
+export APP_STORE_PROVISIONING_PROFILE='/absolute/path/SpaceMonger_for_Mac_App_Store.provisionprofile'
 Scripts/package-app.sh v1.0.0 dist app-store
 codesign -d --entitlements - 'dist/SpaceMonger for Mac.app'
 ```
