@@ -79,6 +79,8 @@ Developer ID Application certificate, submits it to Apple for notarization, and
 staples the accepted ticket before publishing the ZIP. A failed signing or
 notarization step prevents publication.
 
+For Mac App Store packaging and submission, see [the App Store guide](Docs/APP_STORE.md).
+
 Before the first signed release, configure the five Apple Actions secrets described
 in [the release setup guide](Docs/RELEASING.md).
 
