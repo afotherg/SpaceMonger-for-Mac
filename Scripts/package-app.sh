@@ -12,6 +12,7 @@ DISPLAY_VERSION="${VERSION#v}"
 DISPLAY_VERSION="${DISPLAY_VERSION%%-*}"
 DISPLAY_VERSION="${DISPLAY_VERSION%%+*}"
 BUILD_VERSION="$(printf '%s' "$DISPLAY_VERSION" | tr -cd '0-9.')"
+BUILD_VERSION="${BUILD_NUMBER:-$BUILD_VERSION}"
 
 if [[ "$MODE" != developer-id && "$MODE" != app-store ]]; then
     echo "Mode must be developer-id or app-store" >&2
@@ -78,6 +79,9 @@ PLIST
 
 if [[ "$MODE" == app-store ]]; then
     cp "$APP_STORE_PROVISIONING_PROFILE" "$APP_BUNDLE/Contents/embedded.provisionprofile"
+    # Downloaded provisioning profiles can carry quarantine metadata. App Store
+    # Connect rejects a package if any bundled file retains that attribute.
+    xattr -cr "$APP_BUNDLE"
     codesign --force --timestamp --entitlements Assets/AppStore.entitlements \
         --sign "$SIGNING_IDENTITY" "$APP_BUNDLE"
 elif [[ -n "${SIGNING_IDENTITY:-}" ]]; then
