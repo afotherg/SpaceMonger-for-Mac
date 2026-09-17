@@ -68,6 +68,8 @@ cat > "$APP_BUNDLE/Contents/Info.plist" <<PLIST
     <string>Copyright © 2026 SpaceMonger for Mac contributors</string>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>ITSAppUsesNonExemptEncryption</key>
+    <false/>
 </dict>
 </plist>
 PLIST

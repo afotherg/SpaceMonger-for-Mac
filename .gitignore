@@ -8,3 +8,5 @@ tmp/
 *.p8
 *.key
 *.certSigningRequest
+*.provisionprofile
+*.mobileprovision
