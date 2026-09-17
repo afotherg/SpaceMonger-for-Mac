@@ -64,6 +64,8 @@ cat > "$APP_BUNDLE/Contents/Info.plist" <<PLIST
     <string>$BUILD_VERSION</string>
     <key>LSMinimumSystemVersion</key>
     <string>12.0</string>
+    <key>LSApplicationCategoryType</key>
+    <string>public.app-category.utilities</string>
     <key>NSHumanReadableCopyright</key>
     <string>Copyright © 2026 SpaceMonger for Mac contributors</string>
     <key>NSHighResolutionCapable</key>
